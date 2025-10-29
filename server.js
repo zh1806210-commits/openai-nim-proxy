@@ -1,10 +1,10 @@
-// server.js - OpenAI to NVIDIA NIM API Proxy
+// server.js - OpenAI to NVIDIA NIM API Proxy (Universal Version)
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 // Middleware
 app.use(cors());
@@ -14,7 +14,7 @@ app.use(express.json());
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-// 🔥 Toggles
+// Feature toggles
 const SHOW_REASONING = false;
 const ENABLE_THINKING_MODE = false;
 
@@ -29,16 +29,23 @@ const MODEL_MAPPING = {
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking'
 };
 
-// 🧩 Root route (fix)
+// Root route
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
-    message: 'NVIDIA NIM OpenAI Proxy is live',
-    endpoints: ['/health', '/v1/models', '/v1/chat/completions']
+    message: 'NVIDIA NIM OpenAI Proxy is live on Render 🚀',
+    endpoints: [
+      '/health',
+      '/v1/models',
+      '/v1/chat/completions',
+      '/chat/completions',
+      '/v1/completions',
+      '/completions'
+    ]
   });
 });
 
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -48,74 +55,64 @@ app.get('/health', (req, res) => {
   });
 });
 
-// List models endpoint (OpenAI compatible)
-app.get('/v1/models', (req, res) => {
+// Models endpoint
+app.get(['/v1/models', '/models'], (req, res) => {
   const models = Object.keys(MODEL_MAPPING).map(model => ({
     id: model,
     object: 'model',
     created: Date.now(),
     owned_by: 'nvidia-nim-proxy'
   }));
+
   res.json({ object: 'list', data: models });
 });
 
-// Chat completions endpoint
-app.post('/v1/chat/completions', async (req, res) => {
+// Main completion handler
+const handleCompletions = async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, stream } = req.body;
-    let nimModel = MODEL_MAPPING[model];
+    const { model, messages, prompt, temperature, max_tokens, stream } = req.body;
+    const nimModel = MODEL_MAPPING[model] || 'meta/llama-3.1-8b-instruct';
 
-    if (!nimModel) {
-      nimModel = 'meta/llama-3.1-8b-instruct'; // Default fallback
-    }
-
-    const nimRequest = {
-      model: nimModel,
-      messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 4096,
-      stream: stream || false,
-      extra_body: ENABLE_THINKING_MODE ? { chat_template_kwargs: { thinking: true } } : undefined
-    };
+    const nimRequest = messages
+      ? { model: nimModel, messages, temperature, max_tokens, stream }
+      : { model: nimModel, messages: [{ role: 'user', content: prompt }], temperature, max_tokens, stream };
 
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
       headers: {
-        'Authorization': `Bearer ${NIM_API_KEY}`,
+        Authorization: `Bearer ${NIM_API_KEY}`,
         'Content-Type': 'application/json'
-      }
+      },
+      responseType: stream ? 'stream' : 'json'
     });
 
-    const openaiResponse = {
-      id: `chatcmpl-${Date.now()}`,
-      object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: response.data.choices.map(choice => ({
-        index: choice.index,
-        message: {
-          role: choice.message.role,
-          content: SHOW_REASONING && choice.message.reasoning_content
-            ? `<think>\n${choice.message.reasoning_content}\n</think>\n\n${choice.message.content}`
-            : choice.message.content
-        },
-        finish_reason: choice.finish_reason
-      })),
-      usage: response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-    };
-
-    res.json(openaiResponse);
-
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      response.data.on('data', chunk => res.write(chunk));
+      response.data.on('end', () => res.end());
+      response.data.on('error', err => {
+        console.error('Stream error:', err);
+        res.end();
+      });
+    } else {
+      res.json(response.data);
+    }
   } catch (error) {
     console.error('Proxy error:', error.message);
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.message || 'Internal server error',
+        message: error.message,
         type: 'invalid_request_error',
         code: error.response?.status || 500
       }
     });
   }
-});
+};
+
+// ✅ Register all common routes
+app.post(['/v1/chat/completions', '/chat/completions'], handleCompletions);
+app.post(['/v1/completions', '/completions'], handleCompletions);
 
 // Catch-all
 app.all('*', (req, res) => {
@@ -128,7 +125,7 @@ app.all('*', (req, res) => {
   });
 });
 
+// Start server
 app.listen(PORT, () => {
-  console.log(`✅ OpenAI to NVIDIA NIM Proxy running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`✅ OpenAI → NVIDIA NIM Proxy running on Render at port ${PORT}`);
 });
