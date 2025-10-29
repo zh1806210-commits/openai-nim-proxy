@@ -12,6 +12,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Handle preflight requests for all routes
+app.options('*', cors({
+  origin: '*',
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization']
+}));
+
 // NVIDIA NIM API configuration
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
@@ -58,6 +65,10 @@ app.get('/v1/models', (req, res) => {
 
 // Chat completions
 app.post('/v1/chat/completions', async (req, res) => {
+  // Explicit CORS headers for browser compatibility
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
 
